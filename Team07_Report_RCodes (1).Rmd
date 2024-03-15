@@ -1,0 +1,492 @@
+---
+title: "Predicting Amazon Stock Price: A Time Series Analysis"
+author: Team 07
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+Load libraries 
+```{r}
+library(forecast)
+library(tidyverse)
+library(zoo)
+library(corrplot)
+library(ggplot2)
+library(patchwork)
+```
+
+Load Data 
+```{r}
+# Amazon 
+Amazon <- read.csv("amzn_split_adjusted.csv")
+
+# S&P500
+sp_data <- read.csv("SP_Historical_Data.csv")
+```
+
+
+Data Cleaning - Amazon
+```{r}
+# Display the first few rows of the 'Amazon' dataset
+head(Amazon)
+
+# Creating a new dataset 'Amazon_clean' by removing rows with missing values
+Amazon_clean <- na.omit(Amazon)
+
+# Print the count of missing values in the 'Amazon_clean' dataset
+sum(is.na(Amazon_clean))
+
+# Display summary statistics of the 'Amazon_clean' dataset
+summary(Amazon_clean)
+
+# Create a new dataset 'amazon_filter' by filtering rows with dates greater than or equal to 2013-11-14
+amazon_filter <- Amazon_clean %>%
+  filter(date >= "2013-11-14")
+
+head(amazon_filter)
+
+```
+
+Clean and Join amazon and S&P Data to test correlation
+```{r}
+# Convert the 'Date' column to a Date format in the 'sp_data' dataset
+sp_data_new <- sp_data %>%
+  mutate(date = as.Date(Date, format = "%m/%d/%Y"))
+
+# Creating a new dataset 'sp_data_final' by removing the original 'Date' column
+sp_data_final <- sp_data_new %>%
+  select(-Date)
+
+# Filtering the 'sp_data_final' dataset to include only rows with dates on or before "2023-11-7"
+sp_filter <- sp_data_final %>%
+  filter(date <= "2023-11-7")
+
+# Convert the 'date' column to character format in the filtered dataset 'sp_filter'
+sp_filter1 <- sp_filter %>%
+  mutate(date = as.character(date))
+sp_filter1
+
+# Merge datasets 'sp_filter1' and 'amazon_filter' based on the 'date' column
+amazon_sp <- sp_filter1 %>%
+  inner_join(amazon_filter, by = "date")
+
+# check for missing column P
+sum(is.na(amazon_sp))
+```
+
+
+
+Visualizations:
+Initial time series:
+```{r}
+#Monthly
+close_value.ts <- ts(Amazon_clean$close, start = c(1997, 6), end = c(2023, 11), freq = 12)
+
+
+
+plot(close_value.ts)
+
+```
+
+
+The distribution of the Adjusted close prices for the Amazon stock data from 2013 and S&P500
+```{r}
+# Amazon
+par(mfrow=c(1,1), mar=c(5,4,4,2)+0.1)
+hist_amazon <- hist(amazon_filter$close, breaks=50, col="lightblue", border="black", 
+                    main="Distribution of Close Prices of Amazon", xlab="Close Price", ylab="Frequency")
+
+# S&P500
+par(mfrow=c(1,1), mar=c(5,4,4,2)+0.1)
+hist_sp500 <- hist(sp_filter$Close.Last, breaks=50, col="lightblue", border="black", 
+                   main="Distribution of Adj Close Prices of S&P500", xlab="Adj Close Price", ylab="Frequency")
+
+```
+
+The histogram indicates how often different price ranges occurred over the dataset timeframe
+
+
+
+
+Line Graph of closing price over time for Amazon and S&P data 
+```{r}
+#Amazon Data
+theme_set(theme_minimal())
+
+
+amazon_filter$date <- as.Date(amazon_filter$date)
+
+# Plotting closing price over time
+plot_amazon <- ggplot(data = amazon_filter, aes(x = date, y = close)) +
+  geom_line() +
+  labs(title = 'Closing Price Trend of Amazon Stock',
+       x = 'Year',
+       y = 'Close Price (Adjusted)') +
+  theme_bw()
+
+plot_amazon
+#S&P 500
+sp_filter$date <- as.Date(sp_filter$date, format = "%Y-%m-%d")
+
+# Plotting closing price trend over time
+plot_sp500 <- ggplot(data = sp_filter, aes(x = date, y = Close.Last)) +
+  geom_line() +
+  labs(title = 'Adj Close Price Trend of S&P 500',
+       x = 'Date',
+       y = 'Adj Close Price') +
+  theme_bw()
+
+plot_sp500
+# Arrange the plots side by side
+together_plot <- plot_amazon + plot_sp500
+
+together_plot
+```
+
+
+
+This line chart provides a clear view of how the closing price has changed, which can be useful for identifying trends, patterns, or stock's performance.
+
+
+Rolling Statistics line Graph
+```{r}
+
+amazon_filter$date <- as.Date(amazon_filter$date)
+
+# Load required libraries
+library(zoo)
+library(ggplot2)
+
+# Define rolling window
+rolling_window <- 30
+
+# Calculate rolling mean and standard deviation for 'close'
+amazon_filter$rolling_mean <- rollmean(amazon_filter$close, k = rolling_window, fill = NA)
+amazon_filter$rolling_std <- rollapply(amazon_filter$close, width = rolling_window, FUN = sd, fill = NA)
+
+# Visualization
+ggplot(amazon_filter, aes(x = date)) +
+  geom_line(aes(y = close, color = "Raw Data Close Price")) +
+  geom_line(aes(y = rolling_mean, color = "Raw Data Rolling Mean")) +
+  geom_line(aes(y = rolling_std, color = "Raw Data Rolling Std Dev")) +
+  labs(title = 'Rolling Mean and Standard Deviation Visualization', 
+       x = 'Date', y = 'Close Price') +
+  scale_color_manual(values = c("Raw Data Close Price" = "black", 
+                                 "Raw Data Rolling Mean" = "blue", 
+                                 "Raw Data Rolling Std Dev" = "red")) +
+  theme_minimal()
+
+
+```
+
+
+
+Calculating mean of closing price for Amazon
+```{r}
+# Compute the monthly mean of the 'close_value.ts' time series data using tapply and cycle functions
+amazon.monthly <- tapply(close_value.ts, cycle(close_value.ts), mean)
+amazon.monthly
+
+# Compute the annual mean of the 'close_value.ts' time series data using the aggregate function
+amazon.annual <- aggregate(close_value.ts, FUN = mean)
+amazon.annual
+
+```
+
+Correlation: 
+```{r}
+# Calculate the correlation between 'Close.Last' in 'amazon_sp' and 'close' in 'amazon_sp'
+corr_result <- cor(amazon_sp$Close.Last, amazon_sp$close)
+corr_result
+
+# Result - 0.914 indicates strong positive correlation between the variables Close.Last and close in your amazon_sp dataset.
+
+
+# Display a summary of the correlation result
+summary(corr_result)
+
+
+# Scatter plot between 'Close.Last' and 'close' in 'Amazon' and 'S&P'
+plot(amazon_sp$Close.Last, amazon_sp$close, 
+     xlab = "Close.Last", ylab = "close",
+     main = "Scatter Plot of closing value : Amazon Vs S&P500")
+
+# trendline
+abline(lm(amazon_sp$close ~ amazon_sp$Close.Last), col = "red")
+text(x = min(amazon_sp$Close.Last), y = max(amazon_sp$close),
+     label = paste("Correlation =", round(corr_result, 3)),
+     pos = 4, col = "blue")
+```
+
+
+
+
+
+
+Preparing training and validation time series data from 'close_value.ts' starting from June 1997, with 60 validation observations
+```{r}
+
+# Define the number of validation observations
+nValid <- 60
+
+# Calculating the number of training observations
+nTrain <- length(close_value.ts) - nValid
+
+# Training time series data from 'close_value.ts' starting from June 1997
+train.ts <- window(close_value.ts, start = c(1997, 6), end = c(1997, nTrain+5))
+
+# Validation time series data from 'close_value.ts' starting from the next observation after the training data
+valid.ts <- window(close_value.ts, start = c(1997, nTrain + 6), end = c(1997, nTrain + nValid+5))
+
+# Display the last few observations of the validation time series data
+tail(valid.ts)
+
+
+# Display the first few observations and the last few observations of the entire time series data
+head(close_value.ts)
+tail(close_value.ts)
+
+# Display the total length of the time series data
+length(close_value.ts)
+
+# Plot the training time series data
+plot(train.ts)
+
+
+
+```
+
+Model1 : Linear Regression
+```{r}
+# Fit a time series linear regression model using the train.ts data with trend and season as predictors
+amazon_reg_linear <- tslm(train.ts ~ trend + season)
+summary(amazon_reg_linear)
+
+# Generate forecasts using the fitted linear regression model for the validation period
+amazon_reg_linear_pred <- forecast(amazon_reg_linear, h = nValid, level = 0)
+amazon_reg_linear_pred$mean
+
+# Plotting the forecast
+plot(amazon_reg_linear_pred, main = 'Regression Model', xlab = 'Time', ylab = 'Close Price', include = 100)
+
+
+
+```
+
+
+Model 2:Polynomial Trend and seasonality 
+```{r}
+# Define and train the model
+amazon_poly_season <- tslm(train.ts ~ trend + I(trend^2) + season)
+summary(amazon_poly_season)
+
+# Generate forecasts
+amazon_poly_season_pred <- forecast(amazon_poly_season, h = nValid, level = 0)
+amazon_poly_season_pred$mean
+
+# Plotting the forecast
+plot(amazon_poly_season_pred, main = 'Polynomial Trend and Seasonality', xlab = 'Time', ylab = 'Close Price', include = 100)
+
+
+
+
+```
+
+
+Model3 : ETS - ANN
+```{r}
+
+# Fit an Exponential Smoothing State model 
+ets_ann <- ets(train.ts, model = "ANN")
+summary(ets_ann)
+
+# Generate forecasts using the fitted ETS model for the validation period
+ets_ann_pred <- forecast(ets_ann, h= nValid, level = 0)
+
+# Extract and display the mean 
+ets_ann_pred$mean
+
+#plot the graph 
+plot(ets_ann_pred, main = 'ETS Model', xlab = 'Time', ylab = 'Close Price', include = 100)
+
+```
+
+Model4 : ARIMA
+```{r}
+
+
+Acf(diff(close_value.ts))
+
+#The model is not a random walk 
+
+
+# Fit ARIMA(1,1,1) model- The choice of ARIMA(1,1,1) for Amazon stock prediction signifies the inclusion of one autoregressive term, one differencing, and one moving average term. 
+amazon.AR1 <- Arima(diff(close_value.ts), order = c(1, 1, 1))
+summary(amazon.AR1)
+
+#Coefficients:
+#         ar1      ma1
+#      0.2523  -1.0000
+#s.e.  0.0545   0.0101
+
+# Fit an auto ARIMA model to the training data
+arima_model <- auto.arima(train.ts)
+summary(arima_model)
+
+
+# Generate forecasts using the fitted ARIMA model for the validation period
+arima_train_pred <- forecast(arima_model, h = nValid, level = 0)
+arima_train_pred
+
+# Plot the ARIMA forecasts
+plot(arima_train_pred, main = 'ARIMA Forecast', xlab = 'Time', ylab = 'Close Price', include = 100)
+                  
+
+
+```
+
+
+
+Check Accuracy for all
+```{r}
+accuracy(amazon_reg_linear_pred$mean, valid.ts)
+accuracy(amazon_poly_season_pred$mean, valid.ts)
+accuracy(ets_ann_pred$mean, valid.ts)
+accuracy(arima_train_pred$mean, valid.ts)
+
+```
+
+
+Prediction
+```{r}
+
+# Fit ARIMA(1,1,1) model with seasonal differencing
+arima_all <- Arima(close_value.ts, order = c(1,1,1), seasonal = c(0,1,1))
+summary(arima_all)
+
+# Number of future predictions
+nFuture <- 24
+
+# Generate forecasts for the future using the ARIMA model
+arima_train_pred_forecast <- forecast(arima_all, h = nFuture, level = 95)
+arima_train_pred_forecast
+
+# Plot the ARIMA forecasts for the future
+plot(arima_train_pred_forecast, include = nFuture)  
+
+# Convert the time index of close_value.ts to Date format
+close_value_dates <- as.Date(time(close_value.ts))
+
+# Set start_date and end_date based on your data
+start_date <- as.Date("2000-01-01")
+end_date <- as.Date("2026-12-31")
+
+# Plot the time series
+plot(close_value_dates, close_value.ts, col = "blue", lwd = 2, type = "l",
+     main = "Time Series Plot- future Preiction", ylim = c(min(close_value.ts, arima_train_pred_forecast$mean), max(close_value.ts, arima_train_pred_forecast$mean)),
+     xlim = c(start_date, end_date), xlab = "Date", ylab = "Close Value")
+lines(as.Date(time(arima_train_pred_forecast$mean)), arima_train_pred_forecast$mean, col = "red", lwd = 2)
+
+arima_train_pred_forecast
+
+```
+
+
+Visualization:
+```{r}
+# Plot the time series
+plot(close_value.ts, col = "blue", lwd = 2, type = "l", main = "Time Series Plot")
+ 
+lines(arima_train_pred$mean, col = "lightblue", lwd = 2)
+lines(amazon_reg_linear_pred$mean, col = "red")
+lines(amazon_poly_season_pred$mean, col = "purple", lwd = 2)
+lines(ets_ann_pred$mean, col = "orange", lwd = 2)
+lines(valid.ts, col = "green", lwd = 2)
+
+legend("topleft", legend = c("Original", "ARIMA","Regression", "Poly Season", "ETS", "Validation"), col = c("blue", "lightblue","red", "purple", "orange", "green"), lty = 1, lwd = 2)
+```
+Comparing test data for the last 5 months to our prediction output: ARIMA
+Preparing the train, valid and test data:
+```{r}
+# Define the number of validation observations
+nTest <- 5 
+nValid1 <- 60 
+
+
+# Calculating the number of training observations
+nTrain1 <- length(close_value.ts) - nValid1 - nTest
+nTrain1
+
+
+# Training time series data from 'close_value.ts' starting from June 1997
+train.ts1 <- window(close_value.ts, start = c(1997, 6), end = c(1997, nTrain1+5))
+train.ts1
+
+
+# Validation time series data from 'close_value.ts' for the last 6 months
+valid.ts1 <- window(close_value.ts, start = c(1997, nTrain1 +6), end = c(1997, nTrain1 + nValid1+5))
+valid.ts1
+
+
+# Test time series data for the last 6 months
+test.ts1 <- window(close_value.ts, start = c(1997, nTrain1 + nValid1 +6), end = c(2023, 11))
+test.ts1
+
+
+```
+
+Running ARIMA Model and predicting future of 5 months to compare with actual data
+```{r}
+# Fit an auto ARIMA model to the training data
+arima_model_compare <- auto.arima(train.ts1)
+summary(arima_model_compare)
+
+# Generate forecasts using the fitted ARIMA model for the validation period
+arima_train_pred_compare <- forecast(arima_model_compare, h = nValid1, level = 0)
+arima_train_pred_compare
+#starts from july 2018 and end in 2023 June : output 
+
+# Fit ARIMA(1,1,1) model with seasonal differencing
+arima_all_compare <- Arima(valid.ts1, order = c(1,1,1), seasonal = c(1,1,0))
+summary(arima_all_compare)
+
+# Number of future predictions
+nFuture <- 5
+
+# Generate forecasts for the future using the ARIMA model
+arima_future_pred_compare <- forecast(arima_all_compare, h = nFuture, level = 95)
+arima_future_pred_compare
+
+
+# Extract mean values from ARIMA forecast
+arima_forecast_mean <- as.data.frame(arima_future_pred_compare$mean)
+
+
+# Create a table with the mean values from ARIMA forecast and test set
+result_table <- cbind(Arima_Forecast = arima_forecast_mean, Actual_Test_Data = as.numeric(test.ts1))
+
+# Print the result table
+print(result_table)
+
+
+# Plot ARIMA forecast and test data
+plot(arima_future_pred_compare, col = "blue", lwd = 2, ylim = c(0, 1.2), main = "ARIMA Forecast vs. Test Data")
+lines(test.ts1, col = "darkgreen")
+legend("bottom", legend = c("ARIMA Forecast", "Test Data"), col = c("blue", "darkgreen"), lwd = 2)
+
+```
